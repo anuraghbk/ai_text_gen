@@ -1,0 +1,40 @@
+import boto3
+import wave
+import io
+
+s3 = boto3.client('s3')
+bedrock = boto3.client("bedrock-runtime", region_name="us-east-1")
+
+def lambda_handler(event, context):
+    # S3 info from event
+    bucket = event['bucket']
+    key = event['key']
+    output_key = key.replace(".wav", "_response.wav")
+
+    # Download WAV file from S3
+    obj = s3.get_object(Bucket=bucket, Key=key)
+    wav_bytes = obj['Body'].read()
+
+    # Validate WAV file format
+    with wave.open(io.BytesIO(wav_bytes), 'rb') as wav_file:
+        assert wav_file.getframerate() == 16000, "Must be 16kHz"
+        assert wav_file.getnchannels() == 1, "Must be mono"
+        assert wav_file.getsampwidth() == 2, "Must be 16-bit PCM"
+
+    # Invoke Nova Sonic
+    response = bedrock.invoke_model(
+        modelId="amazon.nova-sonic-v1:0",
+        body=wav_bytes,
+        contentType="audio/wav",
+        accept="audio/wav"
+    )
+
+    # Save response to S3
+    result_audio = response["body"].read()
+    s3.put_object(Bucket=bucket, Key=output_key, Body=result_audio)
+
+    return {
+        "statusCode": 200,
+        "message": "Speech processed",
+        "output_key": output_key
+    }
